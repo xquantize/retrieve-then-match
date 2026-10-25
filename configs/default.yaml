@@ -1,0 +1,52 @@
+# retrieve-then-match: default experiment config
+# Every number in a run report is reproducible from this file + uv.lock.
+
+dataset:
+  name: abt-buy
+  # Original source: Leipzig ER benchmark datasets (Abt.csv, Buy.csv,
+  # abt_buy_perfectMapping.csv). If the URL moves, download the zip
+  # manually and unzip it into raw_dir.
+  url: https://dbs.uni-leipzig.de/file/Abt-Buy.zip
+  raw_dir: data/raw/abt-buy
+  encoding: latin-1
+  # Each Abt record is a query; Buy is the corpus we search over.
+  query_source: abt
+  corpus_source: buy
+  # Fields concatenated into the text we index and embed.
+  text_fields: [name, description]
+  max_chars: 512          # truncate long descriptions before indexing
+
+split:
+  seed: 42
+  # Queries are split into validation (threshold tuning) and test (reported).
+  val_fraction: 0.3
+
+retrieval:
+  top_k: 20               # candidates passed on to the matcher
+  eval_ks: [1, 5, 10, 20] # recall@k reported at each of these
+
+  bm25:
+    k1: 1.5
+    b: 0.75
+
+  dense:
+    model: BAAI/bge-small-en-v1.5
+    batch_size: 64
+    normalize: true
+    # Product-to-product matching is symmetric, so no query instruction prefix.
+    query_prefix: ""
+    device: auto          # auto | cpu | mps | cuda
+
+  hybrid:
+    rrf_k: 60             # standard Reciprocal Rank Fusion constant
+
+matching:
+  # Pretrained relevance cross-encoder used as a zero-shot matcher baseline.
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  batch_size: 64
+  # Match threshold is tuned on the validation split to maximise F1,
+  # then frozen and applied to the test split.
+  threshold_metric: f1
+
+output:
+  runs_dir: runs
