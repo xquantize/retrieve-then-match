@@ -48,9 +48,16 @@ retrieval:
     depth: 100            # candidates taken from each retriever before fusing
 
 matching:
+  # Candidate generator feeding the matcher, and how many candidates it passes on.
+  retriever: bm25         # bm25 | dense | hybrid
+  candidate_k: 20         # must be <= retrieval.top_k
   # Pretrained relevance cross-encoder used as a zero-shot matcher baseline.
   model: cross-encoder/ms-marco-MiniLM-L-6-v2
   batch_size: 64
+  device: auto            # auto | cpu | mps | cuda
+  # top1: each query matches at most its best candidate (if above threshold).
+  # threshold: every candidate above threshold is a match (allows 1-to-many).
+  policy: top1
   # Match threshold is tuned on the validation split to maximise F1,
   # then frozen and applied to the test split.
   threshold_metric: f1

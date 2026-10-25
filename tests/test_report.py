@@ -73,3 +73,11 @@ def test_compare_rejects_different_queries(tmp_path: Path) -> None:
     b = save_run(_run("b", {"q1": ["a"], "q3": ["c"]}), cfg, GOLD, tmp_path)
     with pytest.raises(ValueError, match="different queries"):
         compare_runs(load_run(a), load_run(b), (1,))
+
+
+def test_ambiguous_reference_lists_matches(tmp_path: Path) -> None:
+    cfg = load_config(DEFAULT_CONFIG)
+    save_run(_run("dense-a", {"q1": ["a"]}), cfg, GOLD, tmp_path)
+    save_run(_run("dense-b", {"q1": ["a"]}), cfg, GOLD, tmp_path)
+    with pytest.raises(FileNotFoundError, match="dense-a"):
+        resolve_run("dense", tmp_path)

@@ -1,7 +1,8 @@
-"""Command-line interface: download, inspect, retrieve, runs, compare."""
+"""Command-line interface: download, inspect, retrieve, match, runs, compare."""
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Annotated, cast
 
@@ -12,7 +13,16 @@ from rich.table import Table
 from retrieve_then_match.compare import compare_runs
 from retrieve_then_match.config import Config, load_config
 from retrieve_then_match.data import Split, dataset_stats, download, load_dataset
-from retrieve_then_match.evaluate import run_retrieval
+from retrieve_then_match.evaluate import RetrievalRun, run_retrieval
+from retrieve_then_match.matching import (
+    CrossEncoderScorer,
+    decision_candidates,
+    evaluate_matching,
+    gold_pairs,
+    rerank_split,
+    tune_threshold,
+)
+from retrieve_then_match.metrics import recall_at_k, retrieval_metrics
 from retrieve_then_match.report import list_runs, load_run, resolve_run, save_run
 from retrieve_then_match.retrieval import METHODS, build_retriever
 
@@ -114,6 +124,76 @@ def retrieve_cmd(
         console.print(f"Saved report to [cyan]{path}[/cyan]")
 
 
+@app.command("match")
+def match_cmd(
+    split: Annotated[str, typer.Option(help="val or test.")] = "val",
+    config: ConfigOption = DEFAULT_CONFIG,
+    overrides: SetOption = None,
+    save: Annotated[bool, typer.Option(help="Save a run report under runs/.")] = True,
+) -> None:
+    """Retrieve, rerank with a cross-encoder, and score matches (threshold tuned on val)."""
+    if split not in SPLITS:
+        raise typer.BadParameter(f"split must be one of {SPLITS}", param_hint="--split")
+    cfg = _load(config, overrides)
+    m = cfg.matching
+    ds = load_dataset(cfg.dataset, cfg.split)
+
+    retriever = build_retriever(m.retriever, cfg.retrieval)
+    t0 = time.perf_counter()
+    retriever.index(ds.corpus)
+    index_seconds = time.perf_counter() - t0
+    scorer = CrossEncoderScorer(m)
+
+    # The threshold is always tuned on validation, then frozen.
+    with console.status("Scoring validation candidates..."):
+        val = rerank_split(retriever, scorer, ds, "val", m.candidate_k)
+    threshold = tune_threshold(
+        decision_candidates(val.rankings, m.policy), gold_pairs(ds.gold, list(val.rankings))
+    )
+    target = val
+    if split == "test":
+        with console.status("Scoring test candidates..."):
+            target = rerank_split(retriever, scorer, ds, "test", m.candidate_k)
+    result = evaluate_matching(target, ds, cast(Split, split), m.policy, threshold)
+
+    ranked_ids = {q: [h.id for h in hits] for q, hits in result.rankings.items()}
+    rerank = retrieval_metrics(ranked_ids, ds.gold, cfg.retrieval.eval_ks)
+    rerank["candidate_recall"] = recall_at_k(ranked_ids, ds.gold, m.candidate_k)
+    method = f"match-{scorer.name}-{retriever.name}-k{m.candidate_k}-{m.policy}"
+
+    table = Table(title=f"{method} on {split} (config {cfg.fingerprint()})")
+    table.add_column("metric")
+    table.add_column("value", justify="right")
+    for name in ("precision", "recall", "f1"):
+        table.add_row(f"[bold]{name}[/bold]", f"[bold]{result.metrics[name]:.3f}[/bold]")
+    table.add_row("threshold (tuned on val)", f"{threshold:.4f}")
+    for name in ("true_positives", "predicted_pairs", "gold_pairs"):
+        table.add_row(name, f"{int(result.metrics[name]):,}")
+    table.add_row("candidate recall (ceiling)", f"{rerank['candidate_recall']:.3f}")
+    table.add_row("reranked hit@1", f"{rerank['hit@1']:.3f}")
+    mrr_key = f"mrr@{max(cfg.retrieval.eval_ks)}"
+    table.add_row(f"reranked {mrr_key}", f"{rerank[mrr_key]:.3f}")
+    for name, value in result.latency_ms.items():
+        table.add_row(f"latency {name} (ms)", f"{value:.2f}")
+    console.print(table)
+    if split == "val":
+        console.print(
+            "[yellow]Threshold was tuned on this split, so val F1 is optimistic.[/yellow]"
+        )
+
+    if save:
+        run = RetrievalRun(
+            method=method,
+            split=cast(Split, split),
+            metrics={**rerank, **result.metrics},
+            latency_ms=result.latency_ms,
+            index_seconds=index_seconds,
+            rankings=result.rankings,
+        )
+        path = save_run(run, cfg, ds.gold, cfg.output.runs_dir)
+        console.print(f"Saved report to [cyan]{path}[/cyan]")
+
+
 def _format_p(p: float) -> str:
     return "<0.0001" if p < 1e-4 else f"{p:.4f}"
 
@@ -157,8 +237,12 @@ def compare_cmd(
     alpha: Annotated[float, typer.Option(help="Significance level after Holm.")] = 0.05,
 ) -> None:
     """Paired significance test of run B against run A on the same queries."""
-    a = load_run(resolve_run(run_a, runs_dir))
-    b = load_run(resolve_run(run_b, runs_dir))
+    try:
+        a = load_run(resolve_run(run_a, runs_dir))
+        b = load_run(resolve_run(run_b, runs_dir))
+    except FileNotFoundError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
     ks = tuple(int(k) for k in a.summary["config"]["retrieval"]["eval_ks"])
     rows = compare_runs(a, b, ks)
 

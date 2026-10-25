@@ -103,8 +103,12 @@ class RetrievalConfig(_Strict):
 
 
 class MatchingConfig(_Strict):
+    retriever: Literal["bm25", "dense", "hybrid"] = "bm25"
+    candidate_k: int = Field(default=20, gt=0)
     model: str
     batch_size: int = Field(gt=0)
+    device: Device = "auto"
+    policy: Literal["top1", "threshold"] = "top1"
     threshold_metric: Literal["f1"] = "f1"
 
 
@@ -118,6 +122,15 @@ class Config(_Strict):
     retrieval: RetrievalConfig
     matching: MatchingConfig
     output: OutputConfig
+
+    @model_validator(mode="after")
+    def _candidates_within_top_k(self) -> Config:
+        if self.matching.candidate_k > self.retrieval.top_k:
+            raise ValueError(
+                f"matching.candidate_k={self.matching.candidate_k} exceeds "
+                f"retrieval.top_k={self.retrieval.top_k}"
+            )
+        return self
 
     def fingerprint(self, length: int = 12) -> str:
         """Short, stable SHA-256 hash of the resolved config."""

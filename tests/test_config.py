@@ -80,3 +80,9 @@ def test_hybrid_depth_below_top_k_rejected(raw: dict[str, Any]) -> None:
     raw["retrieval"]["hybrid"]["depth"] = raw["retrieval"]["top_k"] - 1
     with pytest.raises(ValidationError):
         Config.model_validate(raw)
+
+
+def test_candidate_k_above_top_k_rejected(raw: dict[str, Any]) -> None:
+    raw["matching"]["candidate_k"] = raw["retrieval"]["top_k"] + 1
+    with pytest.raises(ValidationError):
+        Config.model_validate(raw)

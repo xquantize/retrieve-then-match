@@ -212,7 +212,11 @@ def resolve_run(ref: str, runs_dir: Path) -> Path:
             raise FileNotFoundError(f"no runs in {runs_dir}")
         return runs[-1]
     matches = [p for p in list_runs(runs_dir) if ref in p.name]
-    if len(matches) != 1:
-        found = "no" if not matches else f"{len(matches)}"
-        raise FileNotFoundError(f"{found} runs in {runs_dir} match {ref!r}; be more specific")
+    if not matches:
+        raise FileNotFoundError(f"no runs in {runs_dir} match {ref!r}")
+    if len(matches) > 1:
+        listing = "\n  ".join(p.name for p in matches)
+        raise FileNotFoundError(
+            f"{len(matches)} runs match {ref!r}; use a longer part of one name:\n  {listing}"
+        )
     return matches[0]
