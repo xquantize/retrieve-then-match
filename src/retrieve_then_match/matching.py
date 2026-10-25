@@ -72,11 +72,13 @@ class Reranked:
 
 
 def rerank_split(
-    retriever: Retriever, scorer: PairScorer, ds: Dataset, split: Split, k: int
+    retriever: Retriever, scorer: PairScorer | None, ds: Dataset, split: Split, k: int
 ) -> Reranked:
     """Retrieve k candidates per query and reorder them by matcher score.
 
-    The retriever must already be indexed. Ties keep the retriever's order.
+    With scorer=None the retriever's own ranking and scores are kept (the
+    no-reranker baseline). The retriever must already be indexed. Ties keep
+    the retriever's order.
     """
     corpus_text = {c.id: c.text for c in ds.corpus}
     rankings: dict[str, list[Hit]] = {}
@@ -84,6 +86,10 @@ def rerank_split(
     for query in ds.split_queries(split):
         t0 = time.perf_counter()
         candidates = retriever.search(query, k)
+        if scorer is None:
+            rankings[query.id] = candidates
+            latencies.append((time.perf_counter() - t0) * 1000.0)
+            continue
         scores = scorer.score([(query.text, corpus_text[h.id]) for h in candidates])
         order = sorted(range(len(candidates)), key=lambda i: (-scores[i], i))
         rankings[query.id] = [Hit(candidates[i].id, float(scores[i])) for i in order]

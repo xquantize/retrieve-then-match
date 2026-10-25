@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from retrieve_then_match.config import DatasetConfig, SplitConfig
@@ -88,3 +89,47 @@ def test_missing_text_field_raises(raw_dir: Path) -> None:
     cfg = _dataset_cfg(raw_dir).model_copy(update={"query_fields": ("name", "manufacturer")})
     with pytest.raises(ValueError, match="manufacturer"):
         load_dataset(cfg, SplitConfig(seed=0, val_fraction=0.5))
+
+
+def _legacy_two_way_split(
+    gold: dict[str, frozenset[str]], seed: int, val_fraction: float
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The original val/test split, kept here to prove backwards compatibility."""
+    rng = np.random.default_rng(seed)
+    val: list[str] = []
+    test: list[str] = []
+    for has_match in (True, False):
+        group = sorted(q for q, m in gold.items() if bool(m) == has_match)
+        order = rng.permutation(len(group))
+        n_val = round(len(group) * val_fraction)
+        val.extend(group[i] for i in order[:n_val])
+        test.extend(group[i] for i in order[n_val:])
+    return tuple(sorted(val)), tuple(sorted(test))
+
+
+def _synthetic_gold(n: int) -> dict[str, frozenset[str]]:
+    return {f"q{i:03d}": (frozenset({f"c{i}"}) if i % 5 else frozenset()) for i in range(n)}
+
+
+def test_three_way_split_is_disjoint_complete_and_sized() -> None:
+    gold = _synthetic_gold(200)
+    train, val, test = split_query_ids(
+        gold, SplitConfig(seed=1, train_fraction=0.4, val_fraction=0.2)
+    )
+    assert (
+        not (set(train) & set(val)) and not (set(train) & set(test)) and not (set(val) & set(test))
+    )
+    assert set(train) | set(val) | set(test) == set(gold)
+    assert (len(train), len(val), len(test)) == (80, 40, 80)
+
+
+def test_train_fraction_zero_reproduces_legacy_split() -> None:
+    gold = _synthetic_gold(150)
+    train, val, test = split_query_ids(gold, SplitConfig(seed=42, val_fraction=0.3))
+    assert train == ()
+    assert (val, test) == _legacy_two_way_split(gold, seed=42, val_fraction=0.3)
+
+
+def test_split_must_leave_test_queries() -> None:
+    with pytest.raises(ValueError):
+        SplitConfig(seed=0, train_fraction=0.6, val_fraction=0.4)

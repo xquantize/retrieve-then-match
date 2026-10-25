@@ -49,7 +49,15 @@ class DatasetConfig(_Strict):
 
 class SplitConfig(_Strict):
     seed: int
+    # 0 reproduces the earlier two-way (val/test) split exactly.
+    train_fraction: float = Field(default=0.0, ge=0.0, lt=1.0)
     val_fraction: float = Field(gt=0.0, lt=1.0)
+
+    @model_validator(mode="after")
+    def _leaves_a_test_split(self) -> SplitConfig:
+        if self.train_fraction + self.val_fraction >= 1.0:
+            raise ValueError("train_fraction + val_fraction must leave room for a test split")
+        return self
 
 
 class BM25Config(_Strict):
@@ -104,6 +112,7 @@ class RetrievalConfig(_Strict):
 
 class MatchingConfig(_Strict):
     retriever: Literal["bm25", "dense", "hybrid"] = "bm25"
+    scorer: Literal["cross_encoder", "retriever"] = "cross_encoder"
     candidate_k: int = Field(default=20, gt=0)
     model: str
     batch_size: int = Field(gt=0)

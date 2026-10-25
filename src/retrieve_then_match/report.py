@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -137,16 +138,26 @@ def _markdown(summary: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
 def save_run(
-    run: RetrievalRun, cfg: Config, gold: Mapping[str, frozenset[str]], runs_dir: Path
+    run: RetrievalRun,
+    cfg: Config,
+    gold: Mapping[str, frozenset[str]],
+    runs_dir: Path,
+    tag: str | None = None,
 ) -> Path:
+    if tag is not None and not _TAG.fullmatch(tag):
+        raise ValueError(f"tag {tag!r} may only contain letters, digits, '.', '_' and '-'")
     created = datetime.now(UTC)
     fingerprint = cfg.fingerprint()
-    base = f"{created:%Y%m%d-%H%M%S}_{run.method}_{run.split}_{fingerprint}"
-    path = runs_dir / base
+    stem = f"{created:%Y%m%d-%H%M%S}_{run.method}_{run.split}_{fingerprint}"
+    tag_part = f"__{tag}" if tag else ""
+    path = runs_dir / f"{stem}{tag_part}"
     suffix = 1
-    while path.exists():
-        path = runs_dir / f"{base}-{suffix}"
+    while path.exists():  # keep the tag last so exact-tag lookup still works
+        path = runs_dir / f"{stem}-{suffix}{tag_part}"
         suffix += 1
     path.mkdir(parents=True)
 
@@ -156,6 +167,7 @@ def save_run(
         "method": run.method,
         "split": run.split,
         "fingerprint": fingerprint,
+        "tag": tag,
         "metrics": run.metrics,
         "latency_ms": run.latency_ms,
         "index_seconds": run.index_seconds,
@@ -195,14 +207,15 @@ def load_run(path: Path) -> SavedRun:
 
 
 def list_runs(runs_dir: Path) -> list[Path]:
-    """Run folders, oldest first."""
+    """Run folders, oldest first (by write time, so runs in the same second still order)."""
     if not runs_dir.exists():
         return []
-    return sorted(p for p in runs_dir.iterdir() if (p / REPORT_JSON).is_file())
+    runs = [p for p in runs_dir.iterdir() if (p / REPORT_JSON).is_file()]
+    return sorted(runs, key=lambda p: ((p / REPORT_JSON).stat().st_mtime_ns, p.name))
 
 
 def resolve_run(ref: str, runs_dir: Path) -> Path:
-    """Accept a run folder path, or any unique part of a run folder name."""
+    """Accept a run folder path, 'latest', an exact run tag, or a unique name part."""
     candidate = Path(ref)
     if (candidate / REPORT_JSON).is_file():
         return candidate
@@ -211,7 +224,11 @@ def resolve_run(ref: str, runs_dir: Path) -> Path:
         if not runs:
             raise FileNotFoundError(f"no runs in {runs_dir}")
         return runs[-1]
-    matches = [p for p in list_runs(runs_dir) if ref in p.name]
+    runs = list_runs(runs_dir)
+    tagged = [p for p in runs if p.name.endswith(f"__{ref}")]
+    if len(tagged) == 1:  # an exact tag wins over substring matches
+        return tagged[0]
+    matches = [p for p in runs if ref in p.name]
     if not matches:
         raise FileNotFoundError(f"no runs in {runs_dir} match {ref!r}")
     if len(matches) > 1:

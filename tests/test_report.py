@@ -81,3 +81,17 @@ def test_ambiguous_reference_lists_matches(tmp_path: Path) -> None:
     save_run(_run("dense-b", {"q1": ["a"]}), cfg, GOLD, tmp_path)
     with pytest.raises(FileNotFoundError, match="dense-a"):
         resolve_run("dense", tmp_path)
+
+
+def test_exact_tag_resolves_even_when_substring_is_ambiguous(tmp_path: Path) -> None:
+    cfg = load_config(DEFAULT_CONFIG)
+    short = save_run(_run("m", {"q1": ["a"]}), cfg, GOLD, tmp_path, tag="t-dense")
+    save_run(_run("m", {"q1": ["a"]}), cfg, GOLD, tmp_path, tag="t-dense-desc")
+    assert resolve_run("t-dense", tmp_path) == short
+    assert load_run(short).summary["tag"] == "t-dense"
+
+
+def test_invalid_tag_rejected(tmp_path: Path) -> None:
+    cfg = load_config(DEFAULT_CONFIG)
+    with pytest.raises(ValueError):
+        save_run(_run("m", {"q1": ["a"]}), cfg, GOLD, tmp_path, tag="bad tag/..")

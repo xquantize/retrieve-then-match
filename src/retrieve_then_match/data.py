@@ -35,7 +35,7 @@ _WHITESPACE = re.compile(r"\s+")
 # Characters a UTF-8 BOM turns into when a file is read as latin-1.
 _BOM_CHARS = "\ufeffï»¿"
 
-Split = Literal["val", "test"]
+Split = Literal["train", "val", "test"]
 
 
 @dataclass(frozen=True)
@@ -49,11 +49,12 @@ class Dataset:
     queries: tuple[Record, ...]
     corpus: tuple[Record, ...]
     gold: Mapping[str, frozenset[str]]  # query id -> matching corpus ids (may be empty)
+    train_ids: tuple[str, ...]
     val_ids: tuple[str, ...]
     test_ids: tuple[str, ...]
 
     def split_queries(self, split: Split) -> list[Record]:
-        ids = set(self.val_ids if split == "val" else self.test_ids)
+        ids = set({"train": self.train_ids, "val": self.val_ids, "test": self.test_ids}[split])
         return [q for q in self.queries if q.id in ids]
 
 
@@ -158,18 +159,25 @@ def _build_gold(
 
 def split_query_ids(
     gold: Mapping[str, frozenset[str]], cfg: SplitConfig
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Seeded val/test split, stratified on whether each query has a gold match."""
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Seeded train/val/test split, stratified on whether each query has a gold match.
+
+    Each group is shuffled once and cut as [val | train | test]. Taking val
+    first means train_fraction=0 reproduces the original val/test split.
+    """
     rng = np.random.default_rng(cfg.seed)
+    train: list[str] = []
     val: list[str] = []
     test: list[str] = []
     for has_match in (True, False):
         group = sorted(q for q, m in gold.items() if bool(m) == has_match)
-        order = rng.permutation(len(group))
+        order = [group[i] for i in rng.permutation(len(group))]
         n_val = round(len(group) * cfg.val_fraction)
-        val.extend(group[i] for i in order[:n_val])
-        test.extend(group[i] for i in order[n_val:])
-    return tuple(sorted(val)), tuple(sorted(test))
+        n_train = round(len(group) * cfg.train_fraction)
+        val.extend(order[:n_val])
+        train.extend(order[n_val : n_val + n_train])
+        test.extend(order[n_val + n_train :])
+    return tuple(sorted(train)), tuple(sorted(val)), tuple(sorted(test))
 
 
 def load_dataset(dataset_cfg: DatasetConfig, split_cfg: SplitConfig) -> Dataset:
@@ -189,8 +197,15 @@ def load_dataset(dataset_cfg: DatasetConfig, split_cfg: SplitConfig) -> Dataset:
     )
     mapping = _read_csv(files["mapping"], dataset_cfg.encoding)
     gold = _build_gold(mapping, dataset_cfg, {q.id for q in queries}, {c.id for c in corpus})
-    val_ids, test_ids = split_query_ids(gold, split_cfg)
-    return Dataset(queries=queries, corpus=corpus, gold=gold, val_ids=val_ids, test_ids=test_ids)
+    train_ids, val_ids, test_ids = split_query_ids(gold, split_cfg)
+    return Dataset(
+        queries=queries,
+        corpus=corpus,
+        gold=gold,
+        train_ids=train_ids,
+        val_ids=val_ids,
+        test_ids=test_ids,
+    )
 
 
 def dataset_stats(ds: Dataset) -> dict[str, float]:
@@ -202,6 +217,7 @@ def dataset_stats(ds: Dataset) -> dict[str, float]:
         "gold_pairs": sum(n_matches),
         "queries_with_match": sum(1 for n in n_matches if n > 0),
         "queries_with_multiple_matches": sum(1 for n in n_matches if n > 1),
+        "train_queries": len(ds.train_ids),
         "val_queries": len(ds.val_ids),
         "test_queries": len(ds.test_ids),
         "mean_query_chars": float(np.mean([len(q.text) for q in ds.queries])),

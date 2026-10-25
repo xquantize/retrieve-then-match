@@ -48,7 +48,7 @@ def _dataset() -> Dataset:
         Record("c4", "canon powershot sd1000 camera"),
     )
     gold = {"q1": frozenset({"c1"}), "q2": frozenset({"c2"}), "q3": frozenset({"c4"})}
-    return Dataset(queries, corpus, gold, val_ids=("q1", "q2", "q3"), test_ids=())
+    return Dataset(queries, corpus, gold, train_ids=(), val_ids=("q1", "q2", "q3"), test_ids=())
 
 
 def test_prf_hand_computed() -> None:
@@ -95,3 +95,12 @@ def test_rerank_and_evaluate_end_to_end() -> None:
     result = evaluate_matching(reranked, ds, "val", "top1", threshold)
     assert result.metrics["f1"] == pytest.approx(1.0)
     assert result.metrics["threshold"] == threshold
+
+
+def test_no_scorer_keeps_retriever_ranking() -> None:
+    ds = _dataset()
+    retriever = BM25Retriever(BM25Config(k1=1.5, b=0.75))
+    retriever.index(ds.corpus)
+    reranked = rerank_split(retriever, None, ds, "val", k=3)
+    for query in ds.split_queries("val"):
+        assert reranked.rankings[query.id] == retriever.search(query, 3)

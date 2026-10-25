@@ -42,6 +42,10 @@ SetOption = Annotated[
     ),
 ]
 SPLITS = ("val", "test")
+TagOption = Annotated[
+    str | None,
+    typer.Option(help="Short label added to the run folder; usable as a compare reference."),
+]
 
 
 def _load(config: Path, overrides: list[str] | None) -> Config:
@@ -99,6 +103,7 @@ def retrieve_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
     overrides: SetOption = None,
     save: Annotated[bool, typer.Option(help="Save a run report under runs/.")] = True,
+    tag: TagOption = None,
 ) -> None:
     """Evaluate a retriever: recall@k, hit@k, MRR and per-query latency."""
     if split not in SPLITS:
@@ -120,7 +125,7 @@ def retrieve_cmd(
     table.add_row("index time (s)", f"{run.index_seconds:.2f}")
     console.print(table)
     if save:
-        path = save_run(run, cfg, ds.gold, cfg.output.runs_dir)
+        path = save_run(run, cfg, ds.gold, cfg.output.runs_dir, tag=tag)
         console.print(f"Saved report to [cyan]{path}[/cyan]")
 
 
@@ -130,8 +135,12 @@ def match_cmd(
     config: ConfigOption = DEFAULT_CONFIG,
     overrides: SetOption = None,
     save: Annotated[bool, typer.Option(help="Save a run report under runs/.")] = True,
+    tag: TagOption = None,
 ) -> None:
-    """Retrieve, rerank with a cross-encoder, and score matches (threshold tuned on val)."""
+    """Retrieve, optionally rerank with a cross-encoder, and score matches.
+
+    The match threshold is always tuned on the val split, then frozen.
+    """
     if split not in SPLITS:
         raise typer.BadParameter(f"split must be one of {SPLITS}", param_hint="--split")
     cfg = _load(config, overrides)
@@ -142,7 +151,8 @@ def match_cmd(
     t0 = time.perf_counter()
     retriever.index(ds.corpus)
     index_seconds = time.perf_counter() - t0
-    scorer = CrossEncoderScorer(m)
+    scorer = CrossEncoderScorer(m) if m.scorer == "cross_encoder" else None
+    scorer_name = scorer.name if scorer is not None else "retriever"
 
     # The threshold is always tuned on validation, then frozen.
     with console.status("Scoring validation candidates..."):
@@ -159,7 +169,7 @@ def match_cmd(
     ranked_ids = {q: [h.id for h in hits] for q, hits in result.rankings.items()}
     rerank = retrieval_metrics(ranked_ids, ds.gold, cfg.retrieval.eval_ks)
     rerank["candidate_recall"] = recall_at_k(ranked_ids, ds.gold, m.candidate_k)
-    method = f"match-{scorer.name}-{retriever.name}-k{m.candidate_k}-{m.policy}"
+    method = f"match-{scorer_name}-{retriever.name}-k{m.candidate_k}-{m.policy}"
 
     table = Table(title=f"{method} on {split} (config {cfg.fingerprint()})")
     table.add_column("metric")
@@ -190,7 +200,7 @@ def match_cmd(
             index_seconds=index_seconds,
             rankings=result.rankings,
         )
-        path = save_run(run, cfg, ds.gold, cfg.output.runs_dir)
+        path = save_run(run, cfg, ds.gold, cfg.output.runs_dir, tag=tag)
         console.print(f"Saved report to [cyan]{path}[/cyan]")
 
 
@@ -210,7 +220,7 @@ def runs_cmd(runs_dir: RunsDirOption = DEFAULT_RUNS_DIR) -> None:
         console.print(f"No runs in {runs_dir}")
         return
     table = Table(title=f"runs in {runs_dir}")
-    for column in ("run", "method", "split", "fingerprint", "hit@1", "mrr"):
+    for column in ("run", "tag", "method", "split", "fingerprint", "hit@1", "mrr"):
         table.add_column(column)
     for path in paths:
         summary = load_run(path).summary
@@ -218,6 +228,7 @@ def runs_cmd(runs_dir: RunsDirOption = DEFAULT_RUNS_DIR) -> None:
         mrr_key = next((k for k in metrics if k.startswith("mrr@")), None)
         table.add_row(
             path.name,
+            summary.get("tag") or "-",
             summary["method"],
             summary["split"],
             summary["fingerprint"],

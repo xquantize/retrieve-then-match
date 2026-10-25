@@ -20,8 +20,11 @@ dataset:
 
 split:
   seed: 42
-  # Queries are split into validation (threshold tuning) and test (reported).
-  val_fraction: 0.3
+  # Queries are split three ways (stratified, seeded):
+  #   train: fine-tuning data; val: every tuning decision; test: reported once.
+  # The test share is whatever remains (here 0.4).
+  train_fraction: 0.4
+  val_fraction: 0.2
 
 retrieval:
   top_k: 20               # candidates passed on to the matcher
@@ -50,6 +53,9 @@ retrieval:
 matching:
   # Candidate generator feeding the matcher, and how many candidates it passes on.
   retriever: bm25         # bm25 | dense | hybrid
+  # cross_encoder: rerank candidates with `model`.
+  # retriever: no reranking; decide on the retriever's own scores (baseline).
+  scorer: cross_encoder
   candidate_k: 20         # must be <= retrieval.top_k
   # Pretrained relevance cross-encoder used as a zero-shot matcher baseline.
   model: cross-encoder/ms-marco-MiniLM-L-6-v2
