@@ -122,11 +122,14 @@ def build_text(row: Mapping[str, Any], fields: Sequence[str], max_chars: int) ->
     return text[:max_chars].rstrip()
 
 
-def _to_records(df: pd.DataFrame, cfg: DatasetConfig, source: str) -> tuple[Record, ...]:
-    if "id" not in df.columns:
-        raise ValueError(f"{source}: no 'id' column (found {list(df.columns)})")
+def _to_records(
+    df: pd.DataFrame, fields: Sequence[str], max_chars: int, source: str
+) -> tuple[Record, ...]:
+    for column in ("id", *fields):
+        if column not in df.columns:
+            raise ValueError(f"{source}: no {column!r} column (found {list(df.columns)})")
     records = tuple(
-        Record(id=str(row["id"]).strip(), text=build_text(row, cfg.text_fields, cfg.max_chars))
+        Record(id=str(row["id"]).strip(), text=build_text(row, fields, max_chars))
         for row in df.to_dict("records")
     )
     ids = [r.id for r in records]
@@ -171,16 +174,19 @@ def split_query_ids(
 
 def load_dataset(dataset_cfg: DatasetConfig, split_cfg: SplitConfig) -> Dataset:
     files = _locate_files(dataset_cfg.raw_dir)
-    tables = {
-        source: _read_csv(files[source], dataset_cfg.encoding)
-        for source in (dataset_cfg.query_source, dataset_cfg.corpus_source)
-    }
-    for field in dataset_cfg.text_fields:
-        if not any(field in df.columns for df in tables.values()):
-            raise ValueError(f"text field {field!r} not found in either table")
-
-    queries = _to_records(tables[dataset_cfg.query_source], dataset_cfg, dataset_cfg.query_source)
-    corpus = _to_records(tables[dataset_cfg.corpus_source], dataset_cfg, dataset_cfg.corpus_source)
+    q_src, c_src = dataset_cfg.query_source, dataset_cfg.corpus_source
+    queries = _to_records(
+        _read_csv(files[q_src], dataset_cfg.encoding),
+        dataset_cfg.query_fields,
+        dataset_cfg.max_chars,
+        q_src,
+    )
+    corpus = _to_records(
+        _read_csv(files[c_src], dataset_cfg.encoding),
+        dataset_cfg.corpus_fields,
+        dataset_cfg.max_chars,
+        c_src,
+    )
     mapping = _read_csv(files["mapping"], dataset_cfg.encoding)
     gold = _build_gold(mapping, dataset_cfg, {q.id for q in queries}, {c.id for c in corpus})
     val_ids, test_ids = split_query_ids(gold, split_cfg)

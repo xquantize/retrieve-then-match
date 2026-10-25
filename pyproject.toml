@@ -10,7 +10,6 @@ keywords = ["entity-matching", "retrieval", "bm25", "dense-retrieval", "cross-en
 dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
-    "bm25s>=0.2",
     "sentence-transformers>=3.0",
     "pydantic>=2.7",
     "pyyaml>=6.0",
@@ -60,8 +59,14 @@ quote-style = "double"
 [tool.mypy]
 python_version = "3.11"
 strict = true
+files = ["src", "tests"]
+mypy_path = "src"
+explicit_package_bases = true
+
+# Third-party packages without type information.
+[[tool.mypy.overrides]]
+module = ["pandas.*", "sentence_transformers.*"]
 ignore_missing_imports = true
-files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

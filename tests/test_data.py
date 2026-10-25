@@ -46,7 +46,8 @@ def _dataset_cfg(raw_dir: Path, max_chars: int = 200) -> DatasetConfig:
         raw_dir=raw_dir,
         query_source="abt",
         corpus_source="buy",
-        text_fields=("name", "description"),
+        query_fields=("name", "description"),
+        corpus_fields=("name", "description"),
         max_chars=max_chars,
     )
 
@@ -81,3 +82,9 @@ def test_unknown_mapping_id_raises(raw_dir: Path) -> None:
     _write(raw_dir / "abt_buy_perfectMapping.csv", "idAbt,idBuy\n1,999\n")
     with pytest.raises(ValueError, match="unknown ids"):
         load_dataset(_dataset_cfg(raw_dir), SplitConfig(seed=0, val_fraction=0.5))
+
+
+def test_missing_text_field_raises(raw_dir: Path) -> None:
+    cfg = _dataset_cfg(raw_dir).model_copy(update={"query_fields": ("name", "manufacturer")})
+    with pytest.raises(ValueError, match="manufacturer"):
+        load_dataset(cfg, SplitConfig(seed=0, val_fraction=0.5))

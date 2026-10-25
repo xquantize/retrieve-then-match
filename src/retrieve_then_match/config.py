@@ -8,8 +8,10 @@ fully resolved config, which run reports record for traceability.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Source = Literal["abt", "buy"]
 Device = Literal["auto", "cpu", "mps", "cuda"]
+Tokenizer = Literal["simple", "code_aware"]
 
 
 class _Strict(BaseModel):
@@ -33,7 +36,8 @@ class DatasetConfig(_Strict):
     encoding: str = "latin-1"
     query_source: Source
     corpus_source: Source
-    text_fields: tuple[str, ...] = Field(min_length=1)
+    query_fields: tuple[str, ...] = Field(min_length=1)
+    corpus_fields: tuple[str, ...] = Field(min_length=1)
     max_chars: int = Field(gt=0)
 
     @model_validator(mode="after")
@@ -51,6 +55,7 @@ class SplitConfig(_Strict):
 class BM25Config(_Strict):
     k1: float = Field(gt=0.0)
     b: float = Field(ge=0.0, le=1.0)
+    tokenizer: Tokenizer = "code_aware"
 
 
 class DenseConfig(_Strict):
@@ -114,11 +119,34 @@ class Config(_Strict):
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:length]
 
 
-def load_config(path: str | Path) -> Config:
-    """Load and validate a YAML config file."""
+def apply_overrides(raw: dict[str, Any], overrides: Sequence[str]) -> dict[str, Any]:
+    """Apply dotted ``section.key=value`` overrides; values are parsed as YAML.
+
+    Example: ``retrieval.bm25.tokenizer=simple`` or ``dataset.query_fields=[name]``.
+    Only existing keys can be overridden, so typos fail loudly.
+    """
+    result = copy.deepcopy(raw)
+    for item in overrides:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            raise ValueError(f"override {item!r} must look like section.key=value")
+        *parents, leaf = key.split(".")
+        node: Any = result
+        for part in parents:
+            node = node.get(part) if isinstance(node, dict) else None
+            if not isinstance(node, dict):
+                raise KeyError(f"override {item!r}: no section {part!r}")
+        if leaf not in node:
+            raise KeyError(f"override {item!r}: unknown key {leaf!r}")
+        node[leaf] = yaml.safe_load(value)
+    return result
+
+
+def load_config(path: str | Path, overrides: Sequence[str] = ()) -> Config:
+    """Load a YAML config file, apply any overrides, and validate it."""
     path = Path(path)
     with path.open(encoding="utf-8") as f:
         raw: Any = yaml.safe_load(f)
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: expected a YAML mapping at the top level")
-    return Config.model_validate(raw)
+    return Config.model_validate(apply_overrides(raw, overrides))

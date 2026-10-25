@@ -12,8 +12,10 @@ dataset:
   # Each Abt record is a query; Buy is the corpus we search over.
   query_source: abt
   corpus_source: buy
-  # Fields concatenated into the text we index and embed.
-  text_fields: [name, description]
+  # Fields concatenated into each side's text. Set separately because the
+  # sources differ (Buy has a manufacturer column; Abt descriptions are long).
+  query_fields: [name]
+  corpus_fields: [name, description, manufacturer]
   max_chars: 512          # truncate long descriptions before indexing
 
 split:
@@ -28,6 +30,10 @@ retrieval:
   bm25:
     k1: 1.5
     b: 0.75
+    # simple: lowercase alphanumeric runs.
+    # code_aware: also joins hyphenated codes (MDR-J10 -> mdrj10) and splits
+    # letter/digit runs (161WH -> 161, wh) so model numbers match across sources.
+    tokenizer: code_aware
 
   dense:
     model: BAAI/bge-small-en-v1.5

@@ -10,7 +10,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from retrieve_then_match.config import Config, load_config
+from retrieve_then_match.config import Config, apply_overrides, load_config
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "default.yaml"
 
@@ -54,3 +54,23 @@ def test_fingerprint_is_stable_and_sensitive(raw: dict[str, Any]) -> None:
     raw["split"]["seed"] = raw["split"]["seed"] + 1
     c = Config.model_validate(raw)
     assert a.fingerprint() != c.fingerprint()
+
+
+def test_overrides_apply_and_parse_yaml_values() -> None:
+    cfg = load_config(
+        DEFAULT_CONFIG,
+        ["retrieval.bm25.tokenizer=simple", "dataset.query_fields=[name]", "split.seed=7"],
+    )
+    assert cfg.retrieval.bm25.tokenizer == "simple"
+    assert cfg.dataset.query_fields == ("name",)
+    assert cfg.split.seed == 7
+    assert cfg.fingerprint() != load_config(DEFAULT_CONFIG).fingerprint()
+
+
+@pytest.mark.parametrize(
+    "override",
+    ["retrieval.bm25.tokeniser=simple", "retreival.top_k=5", "no_equals_sign"],
+)
+def test_bad_overrides_rejected(raw: dict[str, Any], override: str) -> None:
+    with pytest.raises((KeyError, ValueError)):
+        apply_overrides(raw, [override])
