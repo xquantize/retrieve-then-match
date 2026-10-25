@@ -68,6 +68,7 @@ class DenseConfig(_Strict):
 
 class HybridConfig(_Strict):
     rrf_k: int = Field(gt=0)
+    depth: int = Field(default=100, gt=0)
 
 
 class RetrievalConfig(_Strict):
@@ -92,6 +93,11 @@ class RetrievalConfig(_Strict):
             raise ValueError(
                 f"max(eval_ks)={max(self.eval_ks)} exceeds top_k={self.top_k}; "
                 "recall cannot be measured beyond the retrieved candidates"
+            )
+        if self.hybrid.depth < self.top_k:
+            raise ValueError(
+                f"hybrid.depth={self.hybrid.depth} is below top_k={self.top_k}; "
+                "fusion needs at least top_k candidates from each retriever"
             )
         return self
 

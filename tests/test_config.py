@@ -74,3 +74,9 @@ def test_overrides_apply_and_parse_yaml_values() -> None:
 def test_bad_overrides_rejected(raw: dict[str, Any], override: str) -> None:
     with pytest.raises((KeyError, ValueError)):
         apply_overrides(raw, [override])
+
+
+def test_hybrid_depth_below_top_k_rejected(raw: dict[str, Any]) -> None:
+    raw["retrieval"]["hybrid"]["depth"] = raw["retrieval"]["top_k"] - 1
+    with pytest.raises(ValidationError):
+        Config.model_validate(raw)

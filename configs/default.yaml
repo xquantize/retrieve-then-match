@@ -45,6 +45,7 @@ retrieval:
 
   hybrid:
     rrf_k: 60             # standard Reciprocal Rank Fusion constant
+    depth: 100            # candidates taken from each retriever before fusing
 
 matching:
   # Pretrained relevance cross-encoder used as a zero-shot matcher baseline.

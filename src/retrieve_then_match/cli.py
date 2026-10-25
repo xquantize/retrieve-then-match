@@ -114,6 +114,10 @@ def retrieve_cmd(
         console.print(f"Saved report to [cyan]{path}[/cyan]")
 
 
+def _format_p(p: float) -> str:
+    return "<0.0001" if p < 1e-4 else f"{p:.4f}"
+
+
 RunsDirOption = Annotated[Path, typer.Option("--runs-dir", help="Where run reports live.")]
 DEFAULT_RUNS_DIR = Path("runs")
 
@@ -171,8 +175,8 @@ def compare_cmd(
             f"[bold]{diff}[/bold]" if significant else diff,
             f"[{r.ci_low:+.3f}, {r.ci_high:+.3f}]",
             r.test,
-            f"{r.p:.4f}",
-            f"[bold]{r.p_holm:.4f}[/bold]" if significant else f"{r.p_holm:.4f}",
+            _format_p(r.p),
+            f"[bold]{_format_p(r.p_holm)}[/bold]" if significant else _format_p(r.p_holm),
         )
     console.print(table)
     console.print(
