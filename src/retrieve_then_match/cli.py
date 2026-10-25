@@ -1,4 +1,4 @@
-"""Command-line interface: `rtm download`, `rtm inspect`, `rtm retrieve`."""
+"""Command-line interface: download, inspect, retrieve, runs, compare."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from retrieve_then_match.compare import compare_runs
 from retrieve_then_match.config import Config, load_config
 from retrieve_then_match.data import Split, dataset_stats, download, load_dataset
 from retrieve_then_match.evaluate import run_retrieval
+from retrieve_then_match.report import list_runs, load_run, resolve_run, save_run
 from retrieve_then_match.retrieval import METHODS, build_retriever
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="retrieve-then-match")
@@ -86,6 +88,7 @@ def retrieve_cmd(
     split: Annotated[str, typer.Option(help="val or test.")] = "val",
     config: ConfigOption = DEFAULT_CONFIG,
     overrides: SetOption = None,
+    save: Annotated[bool, typer.Option(help="Save a run report under runs/.")] = True,
 ) -> None:
     """Evaluate a retriever: recall@k, hit@k, MRR and per-query latency."""
     if split not in SPLITS:
@@ -106,6 +109,76 @@ def retrieve_cmd(
         table.add_row(f"latency {name} (ms)", f"{value:.2f}")
     table.add_row("index time (s)", f"{run.index_seconds:.2f}")
     console.print(table)
+    if save:
+        path = save_run(run, cfg, ds.gold, cfg.output.runs_dir)
+        console.print(f"Saved report to [cyan]{path}[/cyan]")
+
+
+RunsDirOption = Annotated[Path, typer.Option("--runs-dir", help="Where run reports live.")]
+DEFAULT_RUNS_DIR = Path("runs")
+
+
+@app.command("runs")
+def runs_cmd(runs_dir: RunsDirOption = DEFAULT_RUNS_DIR) -> None:
+    """List saved runs, oldest first."""
+    paths = list_runs(runs_dir)
+    if not paths:
+        console.print(f"No runs in {runs_dir}")
+        return
+    table = Table(title=f"runs in {runs_dir}")
+    for column in ("run", "method", "split", "fingerprint", "hit@1", "mrr"):
+        table.add_column(column)
+    for path in paths:
+        summary = load_run(path).summary
+        metrics = summary["metrics"]
+        mrr_key = next((k for k in metrics if k.startswith("mrr@")), None)
+        table.add_row(
+            path.name,
+            summary["method"],
+            summary["split"],
+            summary["fingerprint"],
+            f"{metrics.get('hit@1', float('nan')):.3f}",
+            f"{metrics[mrr_key]:.3f}" if mrr_key else "-",
+        )
+    console.print(table)
+
+
+@app.command("compare")
+def compare_cmd(
+    run_a: Annotated[
+        str, typer.Argument(help="Baseline run: folder, 'latest', or unique name part.")
+    ],
+    run_b: Annotated[str, typer.Argument(help="Candidate run, same forms as run_a.")],
+    runs_dir: RunsDirOption = DEFAULT_RUNS_DIR,
+    alpha: Annotated[float, typer.Option(help="Significance level after Holm.")] = 0.05,
+) -> None:
+    """Paired significance test of run B against run A on the same queries."""
+    a = load_run(resolve_run(run_a, runs_dir))
+    b = load_run(resolve_run(run_b, runs_dir))
+    ks = tuple(int(k) for k in a.summary["config"]["retrieval"]["eval_ks"])
+    rows = compare_runs(a, b, ks)
+
+    table = Table(title=f"A = {a.label}   vs   B = {b.label}")
+    for column in ("metric", "A", "B", "B - A", "95% CI", "test", "p", "p (Holm)"):
+        table.add_column(column, justify="left" if column in ("metric", "test") else "right")
+    for r in rows:
+        significant = r.p_holm < alpha
+        diff = f"{r.diff:+.3f}"
+        table.add_row(
+            r.metric,
+            f"{r.a:.3f}",
+            f"{r.b:.3f}",
+            f"[bold]{diff}[/bold]" if significant else diff,
+            f"[{r.ci_low:+.3f}, {r.ci_high:+.3f}]",
+            r.test,
+            f"{r.p:.4f}",
+            f"[bold]{r.p_holm:.4f}[/bold]" if significant else f"{r.p_holm:.4f}",
+        )
+    console.print(table)
+    console.print(
+        f"McNemar a/b = queries only A / only B got right. "
+        f"Bold = significant at alpha={alpha} after Holm correction."
+    )
 
 
 if __name__ == "__main__":
