@@ -25,6 +25,12 @@ from retrieve_then_match.matching import (
 from retrieve_then_match.metrics import recall_at_k, retrieval_metrics
 from retrieve_then_match.report import list_runs, load_run, resolve_run, save_run
 from retrieve_then_match.retrieval import METHODS, build_retriever
+from retrieve_then_match.train import (
+    META_FILE,
+    build_training_pairs,
+    default_model_dir,
+    train_cross_encoder,
+)
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="retrieve-then-match")
 console = Console()
@@ -202,6 +208,39 @@ def match_cmd(
         )
         path = save_run(run, cfg, ds.gold, cfg.output.runs_dir, tag=tag)
         console.print(f"Saved report to [cyan]{path}[/cyan]")
+
+
+@app.command("train")
+def train_cmd(
+    config: ConfigOption = DEFAULT_CONFIG,
+    overrides: SetOption = None,
+    output: Annotated[
+        Path | None, typer.Option(help="Model folder (default: derived from the config).")
+    ] = None,
+    force: Annotated[bool, typer.Option(help="Retrain even if the folder exists.")] = False,
+) -> None:
+    """Fine-tune the cross-encoder on train-split pairs with BM25 hard negatives."""
+    cfg = _load(config, overrides)
+    out_dir = output or default_model_dir(cfg)
+    if (out_dir / META_FILE).is_file() and not force:
+        console.print(f"[yellow]Already trained:[/yellow] {out_dir} (use --force to retrain)")
+    else:
+        ds = load_dataset(cfg.dataset, cfg.split)
+        pairs = build_training_pairs(ds, cfg)
+        positives = sum(1 for p in pairs if p.label == 1.0)
+        console.print(
+            f"Training on {len(pairs):,} pairs ({positives:,} positive, "
+            f"{len(pairs) - positives:,} hard negative) from {len(ds.train_ids)} train queries"
+        )
+        with console.status("Fine-tuning..."):
+            meta = train_cross_encoder(pairs, cfg, out_dir)
+        losses = ", ".join(f"{loss:.4f}" for loss in meta["epoch_losses"])
+        console.print(f"Epoch losses: {losses}")
+        console.print(f"Trained in {meta['train_seconds']:.0f}s on {meta['device']}")
+        console.print(f"[green]Saved model[/green] to {out_dir}")
+    console.print(
+        f'Evaluate it with:\n  uv run rtm match --set "matching.model={out_dir}" --tag match-ce-ft'
+    )
 
 
 def _format_p(p: float) -> str:

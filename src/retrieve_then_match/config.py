@@ -121,6 +121,19 @@ class MatchingConfig(_Strict):
     threshold_metric: Literal["f1"] = "f1"
 
 
+class TrainingConfig(_Strict):
+    base_model: str
+    negatives_per_query: int = Field(default=4, gt=0)
+    epochs: int = Field(default=3, gt=0)
+    batch_size: int = Field(default=16, gt=0)
+    learning_rate: float = Field(default=2e-5, gt=0.0)
+    warmup_ratio: float = Field(default=0.1, ge=0.0, lt=1.0)
+    max_length: int = Field(default=128, gt=0)
+    seed: int = 42
+    device: Device = "auto"
+    output_dir: Path = Path("models")
+
+
 class OutputConfig(_Strict):
     runs_dir: Path
 
@@ -130,6 +143,7 @@ class Config(_Strict):
     split: SplitConfig
     retrieval: RetrievalConfig
     matching: MatchingConfig
+    training: TrainingConfig
     output: OutputConfig
 
     @model_validator(mode="after")
@@ -143,8 +157,26 @@ class Config(_Strict):
 
     def fingerprint(self, length: int = 12) -> str:
         """Short, stable SHA-256 hash of the resolved config."""
-        canonical = json.dumps(self.model_dump(mode="json"), sort_keys=True)
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:length]
+        return _hash(self.model_dump(mode="json"), length)
+
+    def training_fingerprint(self, length: int = 12) -> str:
+        """Hash of only the settings that change a trained model.
+
+        Output folders and evaluation settings are excluded, so the same
+        training setup always maps to the same model folder.
+        """
+        relevant = {
+            "dataset": self.dataset.model_dump(mode="json"),
+            "split": self.split.model_dump(mode="json"),
+            "bm25": self.retrieval.bm25.model_dump(mode="json"),
+            "training": self.training.model_dump(mode="json", exclude={"output_dir", "device"}),
+        }
+        return _hash(relevant, length)
+
+
+def _hash(obj: Any, length: int) -> str:
+    canonical = json.dumps(obj, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:length]
 
 
 def apply_overrides(raw: dict[str, Any], overrides: Sequence[str]) -> dict[str, Any]:

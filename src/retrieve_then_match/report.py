@@ -86,7 +86,7 @@ def _git(*args: str) -> str | None:
     return result.stdout.strip()
 
 
-def _environment() -> dict[str, Any]:
+def environment() -> dict[str, Any]:
     status = _git("status", "--porcelain")
     return {
         "package_version": __version__,
@@ -172,7 +172,7 @@ def save_run(
         "latency_ms": run.latency_ms,
         "index_seconds": run.index_seconds,
         "config": cfg.model_dump(mode="json"),
-        "environment": _environment(),
+        "environment": environment(),
     }
     (path / REPORT_JSON).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     (path / REPORT_MD).write_text(_markdown(summary), encoding="utf-8")

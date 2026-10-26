@@ -39,6 +39,12 @@ uv run rtm match "${R[@]}" --tag match-ce-k20
 uv run rtm match "${R[@]}" --tag match-ce-k10 --set matching.candidate_k=10
 uv run rtm match "${R[@]}" --tag match-ce-k5 --set matching.candidate_k=5
 
+section "Fine-tuned cross-encoder (trained on the train split only)"
+MODEL="$OUT/model"
+uv run rtm train "${R[@]}" --output "$MODEL"
+uv run rtm match "${R[@]}" --tag match-ft-k20 --set "matching.model=$MODEL"
+uv run rtm match "${R[@]}" --tag match-ft-k5 --set "matching.model=$MODEL" --set matching.candidate_k=5
+
 section "Paired comparisons (A -> B, Holm-corrected)"
 compare bm25-simple    bm25-codeaware "BM25 tokeniser: simple -> code-aware"
 compare bm25-codeaware bm25-nameonly  "BM25 queries: name+description -> name only"
@@ -49,6 +55,9 @@ compare dense-name     dense-desc     "Dense queries: name only -> name+descript
 compare bm25-best      hybrid         "BM25 -> hybrid RRF"
 compare match-bm25     match-ce-k20   "Matcher: BM25 scores -> zero-shot cross-encoder"
 compare match-ce-k20   match-ce-k5    "Cross-encoder candidates: 20 -> 5"
+compare match-ce-k20   match-ft-k20   "Cross-encoder: zero-shot -> fine-tuned"
+compare match-bm25     match-ft-k20   "Matcher: BM25 scores -> fine-tuned cross-encoder"
+compare match-ft-k20   match-ft-k5    "Fine-tuned candidates: 20 -> 5"
 
 section "All runs"
 uv run rtm runs --runs-dir "$OUT"
